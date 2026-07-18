@@ -1,10 +1,38 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // === КОНФИГУРАЦИЯ И ДАННЫЕ ===
+    // === ПРОВЕРКА iOS ===
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+    // === КОНФИГУРАЦИЯ ЗВУКОВ С HOWLER.JS ===
+    const soundsConfig = {
+        bells: { src: './audio/bells.mp3', volume: 0.8 },
+        chimes: { src: './audio/chimes.mp3', volume: 0.8 },
+        fire: { src: './audio/fire.mp3', volume: 0.8 },
+        whistle: { src: './audio/whistle.mp4', volume: 0.8 }
+    };
+
+    // Создаём объекты Howl для каждого звука
+    const sounds = {};
+    Object.keys(soundsConfig).forEach(key => {
+        sounds[key] = new Howl({
+            src: [soundsConfig[key].src],
+            volume: soundsConfig[key].volume,
+            html5: true, // Используем HTML5 Audio для лучшей совместимости с iOS
+            preload: true,
+            onloaderror: function() {
+                console.error(`Ошибка загрузки звука: ${key}`);
+            },
+            onplayerror: function() {
+                console.error(`Ошибка воспроизведения: ${key}`);
+            }
+        });
+    });
+
+    // === ДАННЫЕ ИГРЫ ===
     const soundsData = [
-        { id: 'bells', name: 'Колокольчики', audioId: 'audio-bells' },
-        { id: 'chimes', name: 'Куранты', audioId: 'audio-chimes' },
-        { id: 'fire', name: 'Бенгальский огонь', audioId: 'audio-fire' },
-        { id: 'whistle', name: 'Свистулька', audioId: 'audio-whistle' }
+        { id: 'bells', name: 'Колокольчики' },
+        { id: 'chimes', name: 'Куранты' },
+        { id: 'fire', name: 'Бенгальский огонь' },
+        { id: 'whistle', name: 'Свистулька' }
     ];
 
     // === СОСТОЯНИЕ ИГРЫ ===
@@ -12,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
         score: 0,
         currentTarget: null,
         selectedOption: null,
-        isPlaying: false
+        audioUnlocked: false
     };
 
     // === DOM ЭЛЕМЕНТЫ ===
@@ -33,29 +61,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // === ИНИЦИАЛИЗАЦИЯ ===
     function init() {
-        // Останавливаем все аудио при загрузке
-        document.querySelectorAll('audio').forEach(audio => audio.pause());
-        
+        // Разблокировка аудио на iOS (нужен первый клик пользователя)
+        if (isIOS) {
+            document.addEventListener('click', unlockAudio, { once: true });
+            document.addEventListener('touchstart', unlockAudio, { once: true });
+        }
+
         document.getElementById('btn-start').addEventListener('click', startGame);
         document.getElementById('btn-back').addEventListener('click', goBackToMenu);
         ui.btnListen.addEventListener('click', playRandomSound);
         ui.btnCheck.addEventListener('click', checkAnswer);
         ui.btnPopupClose.addEventListener('click', nextRound);
 
-        // Клик по карточкам
         ui.options.forEach(card => {
             card.addEventListener('click', () => selectCard(card));
         });
         
-        // Создаём снежинки на игровом экране
         createSnowflakes();
+        
+        console.log('🎄 Игра инициализирована с Howler.js');
+        console.log('🔊 Звуки загружены:', Object.keys(sounds));
+    }
+
+    // === РАЗБЛОКИРОВКА АУДИО НА iOS ===
+    function unlockAudio() {
+        if (state.audioUnlocked) return;
+        
+        // Проигрываем тишину для разблокировки аудио контекста
+        const unlock = new Howl({
+            src: ['./audio/bells.mp3'],
+            volume: 0.001,
+            html5: true
+        });
+        
+        unlock.play();
+        setTimeout(() => {
+            unlock.stop();
+            state.audioUnlocked = true;
+            console.log('🔓 Аудио разблокировано');
+        }, 100);
     }
 
     // === ЛОГИКА ИГРЫ ===
     function startGame() {
-        // Скрываем стартовый экран
+        // Разблокируем аудио при старте игры
+        if (isIOS && !state.audioUnlocked) {
+            unlockAudio();
+        }
+
         startScreen.style.display = 'none';
-        // Показываем игровой экран
         gameScreen.classList.remove('hidden');
         state.score = 0;
         updateScore();
@@ -63,12 +117,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function goBackToMenu() {
-        // Останавливаем звук, если играет
-        document.querySelectorAll('audio').forEach(a => a.pause());
+        // Останавливаем все звуки
+        Object.values(sounds).forEach(sound => {
+            if (sound.playing()) {
+                sound.stop();
+            }
+        });
+        
         ui.btnListen.classList.remove('playing');
-        // Показываем стартовый экран
         startScreen.style.display = 'flex';
-        // Скрываем игровой экран
         gameScreen.classList.add('hidden');
     }
 
@@ -77,30 +134,60 @@ document.addEventListener('DOMContentLoaded', () => {
         state.selectedOption = null;
         state.currentTarget = soundsData[Math.floor(Math.random() * soundsData.length)];
         
-        // Сброс UI
         ui.options.forEach(c => c.classList.remove('selected'));
         ui.btnCheck.disabled = true;
         ui.btnListen.classList.remove('playing');
+        
+        console.log('🎯 Новый раунд. Правильный ответ:', state.currentTarget.name);
     }
 
     function playRandomSound() {
         if (!state.currentTarget) return;
+        
+        const soundId = state.currentTarget.id;
+        const sound = sounds[soundId];
+        
+        if (!sound) {
+            console.error('Звук не найден:', soundId);
+            alert('Ошибка: звук не загружен');
+            return;
+        }
 
-        // Сброс предыдущего звука
-        document.querySelectorAll('audio').forEach(a => {
-            a.pause();
-            a.currentTime = 0;
+        // Останавливаем все звуки
+        Object.values(sounds).forEach(s => {
+            if (s.playing()) {
+                s.stop();
+            }
         });
 
-        const audioEl = document.getElementById(state.currentTarget.audioId);
-        if (audioEl) {
-            ui.btnListen.classList.add('playing');
+        // Показываем анимацию
+        ui.btnListen.classList.add('playing');
+        
+        // Воспроизводим звук
+        try {
+            sound.play();
+            console.log(' Воспроизводится:', soundId);
             
-            audioEl.play().catch(e => console.error('Ошибка воспроизведения:', e));
-            
-            audioEl.onended = () => {
+            // Когда звук закончится
+            sound.once('end', () => {
                 ui.btnListen.classList.remove('playing');
-            };
+                console.log('✅ Звук завершён');
+            });
+            
+            // Таймаут на случай ошибки
+            setTimeout(() => {
+                ui.btnListen.classList.remove('playing');
+            }, 10000);
+            
+        } catch (error) {
+            console.error('Ошибка воспроизведения:', error);
+            ui.btnListen.classList.remove('playing');
+            
+            // Если на iOS - пробуем разблокировать
+            if (isIOS && !state.audioUnlocked) {
+                unlockAudio();
+                alert('Нажмите ещё раз, чтобы услышать звук');
+            }
         }
     }
 
@@ -110,8 +197,12 @@ document.addEventListener('DOMContentLoaded', () => {
         state.selectedOption = card.dataset.sound;
         ui.btnCheck.disabled = false;
         
-        // Легкая вибрация на мобильных при выборе
-        if (navigator.vibrate) navigator.vibrate(10);
+        // Вибрация только на Android
+        if (!isIOS && navigator.vibrate) {
+            navigator.vibrate(10);
+        }
+        
+        console.log('👆 Выбрано:', state.selectedOption);
     }
 
     function checkAnswer() {
@@ -130,7 +221,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateScore() {
         ui.score.textContent = state.score;
-        // Анимация счета
         ui.score.parentElement.style.transform = 'scale(1.3)';
         setTimeout(() => ui.score.parentElement.style.transform = 'scale(1)', 300);
     }
@@ -139,22 +229,22 @@ document.addEventListener('DOMContentLoaded', () => {
     function showPopup(isCorrect) {
         if (isCorrect) {
             ui.popupImg.src = 'img/popup/fine-fox.png';
-            ui.popupTitle.textContent = 'Отлично! ';
+            ui.popupTitle.textContent = 'Отлично!';
             ui.popupTitle.style.color = '#2ED573';
             ui.popupText.textContent = `Это были ${state.currentTarget.name}. Так держать!`;
         } else {
             ui.popupImg.src = 'img/popup/badly-fox.png';
             ui.popupTitle.textContent = 'Не совсем...';
             ui.popupTitle.style.color = '#FF4757';
-            ui.popupText.textContent = `Это звучали ${state.currentTarget.name}. Попробуй еще раз!`;
+            ui.popupText.textContent = `Это звучали ${state.currentTarget.name}. Попробуй ещё раз!`;
         }
         
         ui.popup.classList.remove('hidden');
-        // Моушн: тряска попапа при ошибке
+        
         if (!isCorrect) {
             const content = document.getElementById('popup-content');
             content.style.animation = 'none';
-            content.offsetHeight; /* trigger reflow */
+            content.offsetHeight; // trigger reflow
             content.style.animation = 'shakePopup 0.4s ease-in-out';
         }
     }
@@ -163,16 +253,17 @@ document.addEventListener('DOMContentLoaded', () => {
         ui.popup.classList.add('hidden');
     }
 
-    // === СНЕЖИНКИ НА ЭКРАНЕ ===
+    // === СНЕЖИНКИ ===
     function createSnowflakes() {
         if (!gameScreen) return;
         
-        // Удаляем старые снежинки если есть
         const oldSnowflakes = gameScreen.querySelectorAll('.snowflake-fall');
         oldSnowflakes.forEach(s => s.remove());
         
-        // Создаём новые снежинки
-        for (let i = 0; i < 25; i++) {
+        // На iOS меньше снежинок для производительности
+        const count = isIOS ? 15 : 25;
+        
+        for (let i = 0; i < count; i++) {
             const snowflake = document.createElement('div');
             snowflake.className = 'snowflake-fall';
             snowflake.innerHTML = '❅';
@@ -185,6 +276,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Запуск
+    // Запуск игры
     init();
 });
